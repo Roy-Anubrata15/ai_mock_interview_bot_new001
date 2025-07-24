@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { vapi } from "@/lib/vapi.sdk";
 import { interviewer } from "@/constants";
 import { createFeedback } from "@/lib/actions/general.action";
+import { toast } from "sonner";
 
 enum CallStatus {
   INACTIVE = "INACTIVE",
@@ -20,6 +21,16 @@ interface SavedMessage {
   role: "user" | "system" | "assistant";
   content: string;
 }
+
+type AgentProps = {
+  userName: string;
+  userId?: string;
+  interviewId?: string;
+  feedbackId?: string;
+  type: "generate" | "interview";
+  questions?: string[];
+  profileImage?: string;
+};
 
 const Agent = ({
   userName,
@@ -88,61 +99,73 @@ const Agent = ({
     }
 
     const handleGenerateFeedback = async (messages: SavedMessage[]) => {
-      console.log("handleGenerateFeedback");
-
-      const { success, feedbackId: id } = await createFeedback({
-        interviewId: interviewId!,
-        userId: userId!,
-        transcript: messages,
-        feedbackId,
-      });
-
-      if (success && id) {
-        router.push(`/interview/${interviewId}/feedback`);
-      } else {
-        console.log("Error saving feedback");
+      try {
+        if (!messages || messages.length === 0) {
+          toast.error("Interview was not completed. Please try again.");
+          // Redirect back to the interview page
+          if (interviewId) {
+            router.push(`/interview/${interviewId}`);
+          } else {
+            router.push("/");
+          }
+          return;
+        }
+        console.log("handleGenerateFeedback: called");
+        console.log("messages:", messages);
+        console.log("interviewId:", interviewId, "userId:", userId, "feedbackId:", feedbackId);
+        const result = await createFeedback({
+          interviewId: interviewId!,
+          userId: userId!,
+          transcript: messages,
+          feedbackId,
+        });
+        console.log("createFeedback result:", result);
+        if (result.success && result.feedbackId) {
+          router.push(`/interview/${interviewId}/feedback`);
+        } else {
+          console.error("Error saving feedback: result was not successful", result);
+          router.push("/");
+        }
+      } catch (err) {
+        console.error("Exception in handleGenerateFeedback:", err);
         router.push("/");
       }
     };
 
     if (callStatus === CallStatus.FINISHED) {
-      if (type === "generate") {
-        router.push("/");
-      } else {
-        handleGenerateFeedback(messages);
-      }
+      handleGenerateFeedback(messages);
     }
   }, [messages, callStatus, feedbackId, interviewId, router, type, userId]);
+
+  const VAPI_WORKFLOW_ID = "1abb808b-1aac-4d7c-a9eb-ada0b3e7c00a";
 
   const handleCall = async () => {
     setCallStatus(CallStatus.CONNECTING);
 
-    if (type === "generate") {
-      await vapi.start(
-        undefined,
-        undefined,
-        undefined,
-        process.env.NEXT_PUBLIC_VAPI_WORKFLOW_ID!,
-        {
-          variableValues: {
-            username: userName,
-            userid: userId,
-          },
-        }
-      );
-    } else {
-      let formattedQuestions = "";
-      if (questions) {
-        formattedQuestions = questions
-          .map((question) => `- ${question}`)
-          .join("\n");
-      }
+    let formattedQuestions = "";
+    if (questions && questions.length > 0) {
+      formattedQuestions = questions.map((question) => `- ${question}`).join("\n");
+    }
 
+    // Debug logging
+    console.log('Starting Vapi agent with:', {
+      interviewer,
+      questions: formattedQuestions,
+      username: userName,
+      userid: userId,
+      workflowId: VAPI_WORKFLOW_ID,
+    });
+
+    try {
       await vapi.start(interviewer, {
         variableValues: {
           questions: formattedQuestions,
+          username: userName,
+          userid: userId,
         },
       });
+    } catch (err) {
+      console.error('Error starting Vapi agent:', err);
     }
   };
   const handleDisconnect = () => {
